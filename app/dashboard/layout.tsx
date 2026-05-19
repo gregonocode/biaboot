@@ -1,3 +1,4 @@
+//app\dashboard\layout.tsx
 'use client';
 
 import Link from 'next/link';
@@ -28,11 +29,7 @@ const navItems = [
     href: '/dashboard/campanhas',
     icon: Squares2X2Icon,
   },
-  {
-    name: 'Artes',
-    href: '/dashboard/artes',
-    icon: PhotoIcon,
-  },
+ 
   {
     name: 'Agenda',
     href: '/dashboard/agenda',
