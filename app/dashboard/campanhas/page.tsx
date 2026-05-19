@@ -13,6 +13,7 @@ import {
   SparklesIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
+import { createClient } from '@/lib/supabase/client';
 
 type CampaignType = 'semanal' | 'data_especifica';
 type CampaignStatus = 'rascunho' | 'ativa' | 'pausada' | 'finalizada';
@@ -21,6 +22,8 @@ type ConteudoTipo =
   | 'texto'
   | 'imagem'
   | 'imagem_texto'
+  | 'audio'
+  | 'audio_texto'
   | 'video'
   | 'video_texto'
   | 'documento';
@@ -45,7 +48,10 @@ type ContentDraft = {
   horario: string;
   tipo: ConteudoTipo | null;
   texto: string;
+  arquivo: File | null;
   arquivoNome: string | null;
+  mimeType: string | null;
+  conteudoUrl: string | null;
 };
 
 type ListCampaignsResponse = {
@@ -83,6 +89,16 @@ const tiposConteudo: {
     value: 'imagem_texto',
     label: 'Imagem + texto',
     description: 'Imagem com legenda/mensagem.',
+  },
+  {
+    value: 'audio',
+    label: 'Áudio',
+    description: 'Envia somente um áudio.',
+  },
+  {
+    value: 'audio_texto',
+    label: 'Áudio + texto',
+    description: 'Envia áudio com uma mensagem de apoio.',
   },
   {
     value: 'video',
@@ -144,7 +160,10 @@ function generateSevenDaysFromToday(horarioPadrao = '08:00'): ContentDraft[] {
       horario: horarioPadrao,
       tipo: null,
       texto: '',
+      arquivo: null,
       arquivoNome: null,
+      mimeType: null,
+      conteudoUrl: null,
     };
   });
 }
@@ -187,9 +206,39 @@ function getTipoIcon(tipo: ConteudoTipo | null) {
 
   if (tipo.includes('imagem')) return PhotoIcon;
   if (tipo.includes('video')) return PlayCircleIcon;
+  if (tipo.includes('audio')) return PlayCircleIcon;
   if (tipo === 'documento') return DocumentTextIcon;
 
   return DocumentTextIcon;
+}
+
+const SUPPORTED_FILE_TYPES = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'audio/mpeg',
+  'audio/mp3',
+  'audio/ogg',
+  'audio/wav',
+];
+
+function isTipoComArquivo(tipo: ConteudoTipo | null) {
+  return ['imagem', 'imagem_texto', 'audio', 'audio_texto'].includes(
+    tipo ?? '',
+  );
+}
+
+function isTipoComTexto(tipo: ConteudoTipo | null) {
+  return ['texto', 'imagem_texto', 'audio_texto'].includes(tipo ?? '');
+}
+
+function sanitizeFileName(fileName: string) {
+  return fileName
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9._-]/g, '-')
+    .replace(/-+/g, '-')
+    .toLowerCase();
 }
 
 export default function CampanhasPage() {
@@ -222,7 +271,10 @@ export default function CampanhasPage() {
     horario: '08:00',
     tipo: null,
     texto: '',
+    arquivo: null,
     arquivoNome: null,
+    mimeType: null,
+    conteudoUrl: null,
   });
 
   async function loadCampanhas() {
@@ -297,7 +349,10 @@ export default function CampanhasPage() {
       horario: defaultTime,
       tipo: null,
       texto: '',
+      arquivo: null,
       arquivoNome: null,
+      mimeType: null,
+      conteudoUrl: null,
     });
   }
 
@@ -342,6 +397,16 @@ export default function CampanhasPage() {
   function saveSelectedContent() {
     if (!selectedContent) return;
 
+    if (isTipoComTexto(selectedContent.tipo) && !selectedContent.texto.trim()) {
+      alert('Digite a mensagem/legenda desse conteúdo.');
+      return;
+    }
+
+    if (isTipoComArquivo(selectedContent.tipo) && !selectedContent.arquivo) {
+      alert('Selecione um arquivo para esse conteúdo.');
+      return;
+    }
+
     if (selectedContent.id === 'data-especifica') {
       setSingleContent(selectedContent);
       closeContentModal();
@@ -355,6 +420,50 @@ export default function CampanhasPage() {
     );
 
     closeContentModal();
+  }
+
+  async function uploadContentFile(content: ContentDraft) {
+    if (!content.arquivo) {
+      return {
+        conteudoUrl: content.conteudoUrl,
+        nomeArquivo: content.arquivoNome,
+        mimeType: content.mimeType,
+      };
+    }
+
+    if (!SUPPORTED_FILE_TYPES.includes(content.arquivo.type)) {
+      throw new Error(
+        `Tipo de arquivo não suportado: ${content.arquivo.type || 'desconhecido'}`,
+      );
+    }
+
+    const supabase = createClient();
+
+    const fileExt = content.arquivo.name.split('.').pop() ?? 'file';
+    const safeName = sanitizeFileName(content.arquivo.name);
+    const filePath = `campanhas/${Date.now()}-${crypto.randomUUID()}-${safeName}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('biabot-conteudos')
+      .upload(filePath, content.arquivo, {
+        cacheControl: '3600',
+        upsert: false,
+        contentType: content.arquivo.type,
+      });
+
+    if (uploadError) {
+      throw new Error(`Erro ao enviar arquivo: ${uploadError.message}`);
+    }
+
+    const { data } = supabase.storage
+      .from('biabot-conteudos')
+      .getPublicUrl(filePath);
+
+    return {
+      conteudoUrl: data.publicUrl,
+      nomeArquivo: content.arquivo.name || `arquivo.${fileExt}`,
+      mimeType: content.arquivo.type || null,
+    };
   }
 
   async function handleCreateCampaign() {
@@ -389,35 +498,55 @@ export default function CampanhasPage() {
         return;
       }
 
-      const temConteudoComArquivo = conteudosBase.some(
+      const temTipoAindaNaoSuportado = conteudosBase.some(
         (item) =>
           item.tipo &&
-          [
-            'imagem',
-            'imagem_texto',
-            'video',
-            'video_texto',
-            'documento',
-          ].includes(item.tipo),
+          ['video', 'video_texto', 'documento'].includes(item.tipo),
       );
 
-      if (temConteudoComArquivo) {
+      if (temTipoAindaNaoSuportado) {
         setCampaignError(
-          'Por enquanto, crie campanhas apenas com conteúdo do tipo "Apenas texto". O upload de imagem/vídeo/documento será conectado no próximo passo.',
+          'Por enquanto, use apenas texto, imagem, imagem + texto ou áudio. Vídeo e documento entram no próximo ajuste.',
         );
         return;
       }
 
-      const conteudosPayload = conteudosBase.map((item, index) => ({
-        data_envio: item.dateIso,
-        horario: item.horario,
-        tipo_conteudo: item.tipo,
-        texto: item.texto,
-        conteudo_url: null,
-        nome_arquivo: null,
-        mime_type: null,
-        ordem: index + 1,
-      }));
+      for (const [index, item] of conteudosBase.entries()) {
+        if (isTipoComTexto(item.tipo) && !item.texto.trim()) {
+          setCampaignError(`Digite a mensagem do conteúdo ${index + 1}.`);
+          return;
+        }
+
+        if (isTipoComArquivo(item.tipo) && !item.arquivo) {
+          setCampaignError(`Selecione o arquivo do conteúdo ${index + 1}.`);
+          return;
+        }
+      }
+
+      const conteudosComUpload = [];
+
+      for (const [index, item] of conteudosBase.entries()) {
+        let uploaded = {
+          conteudoUrl: item.conteudoUrl,
+          nomeArquivo: item.arquivoNome,
+          mimeType: item.mimeType,
+        };
+
+        if (isTipoComArquivo(item.tipo)) {
+          uploaded = await uploadContentFile(item);
+        }
+
+        conteudosComUpload.push({
+          data_envio: item.dateIso,
+          horario: item.horario,
+          tipo_conteudo: item.tipo,
+          texto: item.texto || null,
+          conteudo_url: uploaded.conteudoUrl,
+          nome_arquivo: uploaded.nomeArquivo,
+          mime_type: uploaded.mimeType,
+          ordem: index + 1,
+        });
+      }
 
       const response = await fetch('/api/campanhas/create', {
         method: 'POST',
@@ -429,7 +558,7 @@ export default function CampanhasPage() {
           descricao: null,
           tipo: campaignType,
           grupo_id: null,
-          conteudos: conteudosPayload,
+          conteudos: conteudosComUpload,
         }),
       });
 
@@ -450,7 +579,12 @@ export default function CampanhasPage() {
       }, 900);
     } catch (error) {
       console.error('Erro ao criar campanha:', error);
-      setCampaignError('Não foi possível criar a campanha agora.');
+
+      setCampaignError(
+        error instanceof Error
+          ? error.message
+          : 'Não foi possível criar a campanha agora.',
+      );
     } finally {
       setCreatingCampaign(false);
     }
@@ -1137,7 +1271,7 @@ export default function CampanhasPage() {
                 </div>
 
                 {selectedContent.tipo &&
-                  ['texto', 'imagem_texto', 'video_texto'].includes(
+                  ['texto', 'imagem_texto', 'audio_texto', 'video_texto'].includes(
                     selectedContent.tipo,
                   ) && (
                     <div>
@@ -1162,9 +1296,15 @@ export default function CampanhasPage() {
                   )}
 
                 {selectedContent.tipo &&
-                  ['imagem', 'imagem_texto', 'video', 'video_texto', 'documento'].includes(
-                    selectedContent.tipo,
-                  ) && (
+                  [
+                    'imagem',
+                    'imagem_texto',
+                    'audio',
+                    'audio_texto',
+                    'video',
+                    'video_texto',
+                    'documento',
+                  ].includes(selectedContent.tipo) && (
                     <div>
                       <label
                         htmlFor="contentFile"
@@ -1176,11 +1316,17 @@ export default function CampanhasPage() {
                       <input
                         id="contentFile"
                         type="file"
-                        onChange={(e) =>
+                        accept="image/png,image/jpeg,image/webp,audio/mpeg,audio/mp3,audio/ogg,audio/wav"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0] ?? null;
+
                           updateSelectedContent({
-                            arquivoNome: e.target.files?.[0]?.name ?? null,
-                          })
-                        }
+                            arquivo: file,
+                            arquivoNome: file?.name ?? null,
+                            mimeType: file?.type ?? null,
+                            conteudoUrl: null,
+                          });
+                        }}
                         className="block w-full cursor-pointer rounded-full border border-zinc-200 bg-[#FAFAFA] text-sm text-zinc-500 file:mr-4 file:h-12 file:cursor-pointer file:rounded-full file:border-0 file:bg-[#181818] file:px-5 file:text-sm file:font-semibold file:text-white"
                       />
 
