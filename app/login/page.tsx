@@ -48,7 +48,10 @@ export default function LoginPage() {
       return;
     }
 
-    router.push('/dashboard');
+    const nextPath = new URLSearchParams(window.location.search).get('next');
+    const redirectTo = nextPath?.startsWith('/dashboard') ? nextPath : '/dashboard';
+
+    router.replace(redirectTo);
     router.refresh();
   }
 

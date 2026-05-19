@@ -40,16 +40,42 @@ export async function updateSession(request: NextRequest) {
   const isAuthPage = pathname === '/login';
   const isDashboard = pathname.startsWith('/dashboard');
 
+  function redirectWithSessionCookies(url: URL) {
+    const response = NextResponse.redirect(url);
+    response.headers.set('Cache-Control', 'private, no-store');
+
+    supabaseResponse.cookies.getAll().forEach((cookie) => {
+      response.cookies.set(cookie);
+    });
+
+    return response;
+  }
+
+  function getSafeDashboardUrl() {
+    const url = request.nextUrl.clone();
+    const nextPath = request.nextUrl.searchParams.get('next');
+
+    if (!nextPath || !nextPath.startsWith('/dashboard')) {
+      url.pathname = '/dashboard';
+      url.search = '';
+      return url;
+    }
+
+    const nextUrl = new URL(nextPath, request.url);
+    url.pathname = nextUrl.pathname;
+    url.search = nextUrl.search;
+    return url;
+  }
+
   if (!user && isDashboard) {
     const url = request.nextUrl.clone();
     url.pathname = '/login';
-    return NextResponse.redirect(url);
+    url.searchParams.set('next', `${pathname}${request.nextUrl.search}`);
+    return redirectWithSessionCookies(url);
   }
 
   if (user && isAuthPage) {
-    const url = request.nextUrl.clone();
-    url.pathname = '/dashboard';
-    return NextResponse.redirect(url);
+    return redirectWithSessionCookies(getSafeDashboardUrl());
   }
 
   return supabaseResponse;

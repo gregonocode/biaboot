@@ -53,7 +53,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
     const supabase = createClient();
 
     await supabase.auth.signOut();
-    router.push('/login');
+    router.replace('/login');
     router.refresh();
   }
 

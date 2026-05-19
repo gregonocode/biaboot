@@ -323,7 +323,7 @@ export default function DashboardPage() {
             </div>
 
             <Link
-              href="/dashboard/configuracoes"
+              href="/dashboard/configuracoes/whatsapp"
               className="mt-6 inline-flex h-12 w-full items-center justify-center rounded-full bg-white px-5 text-sm font-semibold text-[#181818] transition hover:opacity-90"
             >
               Configurar WhatsApp
